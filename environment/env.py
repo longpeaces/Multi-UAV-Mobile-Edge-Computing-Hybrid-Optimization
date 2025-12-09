@@ -11,6 +11,9 @@ class Env:
         self._ues: list[UE] = [UE(i) for i in range(config.NUM_UES)]
         self._uavs: list[UAV] = [UAV(i) for i in range(config.NUM_UAVS)]
         self._time_step: int = 0
+        self._cs_storage: np.ndarray = np.full(config.NUM_CS, config.CS_STORAGE_CAPACITY / 2.0)
+        self._grid_energy_cost: float = 0.0
+        self._market_energy_cost: float = 0.0
 
     @property
     def uavs(self) -> list[UAV]:
@@ -25,11 +28,21 @@ class Env:
         self._ues = [UE(i) for i in range(config.NUM_UES)]
         self._uavs = [UAV(i) for i in range(config.NUM_UAVS)]
         self._time_step = 0
+        self._cs_storage = np.full(config.NUM_CS, config.CS_STORAGE_CAPACITY / 2.0)
+        self._grid_energy_cost = 0.0
+        self._market_energy_cost = 0.0
         return self._get_obs()
 
-    def step(self, actions: np.ndarray, visualize: bool = False) -> tuple[list[np.ndarray], list[float], tuple[float, float, float]]:
-        """Execute one time step of the simulation."""
+    def step(self, actions: np.ndarray, visualize: bool = False) -> tuple[list[np.ndarray], list[float], tuple[float, float, float, float]]:
+        """Execute one time step of the simulation with MEC/energy coordination decisions."""
+        del visualize  # trajectory visualization is no longer used
         self._time_step += 1
+
+        current_hour: int = (self._time_step // config.SLOTS_PER_HOUR) % config.HOURS_PER_DAY
+        self._inject_renewables()
+
+        for uav, action in zip(self._uavs, actions):
+            uav.set_decisions(action, current_hour)
 
         for uav in self._uavs:
             uav.process_requests()
@@ -41,7 +54,8 @@ class Env:
             uav.update_ema_and_cache()
             uav.update_energy_consumption()
 
-        rewards, metrics = self._get_rewards_and_metrics()
+        grid_cost, market_cost = self._apply_energy_trades(current_hour)
+        rewards, metrics = self._get_rewards_and_metrics(grid_cost, market_cost)
 
         if self._time_step % config.T_CACHE_UPDATE_INTERVAL == 0:
             for uav in self._uavs:
@@ -54,17 +68,13 @@ class Env:
         for uav in self._uavs:
             uav.reset_for_next_step()
 
-        if visualize:
-            for uav, action in zip(self._uavs, actions):  # only for visualize script
-                uav.update_position(action)
-        else:
-            self._apply_actions_to_env(actions)
-
-        next_obs: list[np.ndarray] = self._get_obs()
+        next_obs: list[np.ndarray] = self._get_obs(current_hour)
         return next_obs, rewards, metrics
 
-    def _get_obs(self) -> list[np.ndarray]:
+    def _get_obs(self, current_hour: int | None = None) -> list[np.ndarray]:
         """Gets the local observation for each UAV agent."""
+        if current_hour is None:
+            current_hour = (self._time_step // config.SLOTS_PER_HOUR) % config.HOURS_PER_DAY
         # For new time step
         for ue in self._ues:
             ue.generate_request()
@@ -82,7 +92,10 @@ class Env:
             # Part 1: Own state (position and cache status)
             own_pos: np.ndarray = uav.pos[:2] / np.array([config.AREA_WIDTH, config.AREA_HEIGHT])
             own_cache: np.ndarray = uav.cache.astype(np.float32)
-            own_state: np.ndarray = np.concatenate([own_pos, own_cache])
+            cs_price = config.MARKET_PRICES[current_hour]
+            norm_battery: float = uav.battery_level / config.UAV_BATTERY_CAPACITY
+            norm_hour: float = current_hour / float(config.HOURS_PER_DAY)
+            own_state: np.ndarray = np.concatenate([own_pos, np.array([norm_battery, cs_price, norm_hour]), own_cache])
 
             # Part 2: Neighbors state (positions and cache status)
             neighbor_states: np.ndarray = np.zeros((config.MAX_UAV_NEIGHBORS, 2 + config.NUM_FILES))
@@ -109,55 +122,58 @@ class Env:
 
         return all_obs
 
-    def _apply_actions_to_env(self, actions: np.ndarray) -> None:
-        """Calculates next positions and resolves potential collisions iteratively."""
-        current_positions: np.ndarray = np.array([uav.pos[:2] for uav in self._uavs])
-        max_dist: float = config.UAV_SPEED * config.TIME_SLOT_DURATION
+    def _inject_renewables(self) -> None:
+        """Update charging platform storage with renewable generation."""
+        renewable_gain = np.random.normal(loc=config.CS_RENEWABLE_MEAN, scale=config.CS_RENEWABLE_MEAN * 0.1, size=config.NUM_CS)
+        self._cs_storage = np.clip(self._cs_storage + renewable_gain, 0.0, config.CS_STORAGE_CAPACITY)
 
-        # Interpret actions as a direct (x, y) vector
-        delta_vec_raw: np.ndarray = np.array(actions, dtype=np.float32)
+    def _apply_energy_trades(self, current_hour: int) -> tuple[float, float]:
+        """Handle UAV-CS energy trades and compute costs."""
+        grid_cost = 0.0
+        market_cost = 0.0
+        grid_price = config.GRID_PRICES[current_hour]
+        market_price = config.MARKET_PRICES[current_hour]
 
-        # Calculate the magnitude (distance) of this raw vector
-        raw_magnitude: np.ndarray = np.linalg.norm(delta_vec_raw, axis=1, keepdims=True)
+        for uav in self._uavs:
+            cs_idx = uav.id % config.NUM_CS
+            energy_needed = uav.energy
+            available_battery = uav.battery_level
 
-        # Clip the magnitude to be at most 1.0
-        clipped_magnitude: np.ndarray = np.minimum(raw_magnitude, 1.0)
-        distances: np.ndarray = clipped_magnitude * max_dist
-        denom: np.ndarray = raw_magnitude + float(config.EPSILON)
-        directions: np.ndarray = delta_vec_raw / denom
-        delta_pos: np.ndarray = directions * distances
+            # Attempt to satisfy demand from battery first
+            from_battery = min(available_battery, energy_needed)
+            uav.battery_level -= from_battery
+            remaining_demand = energy_needed - from_battery
 
-        proposed_positions: np.ndarray = current_positions + delta_pos
+            # Energy trade decision: positive means buy from CS, negative sell surplus
+            trade = float(np.clip(uav.energy_trade, -1.0, 1.0))
 
-        min_boundary_gap: float = config.UAV_COVERAGE_RADIUS / 2.0
-        for i, uav in enumerate(self._uavs):
-            if not (min_boundary_gap <= proposed_positions[i, 0] <= config.AREA_WIDTH - min_boundary_gap and min_boundary_gap <= proposed_positions[i, 1] <= config.AREA_HEIGHT - min_boundary_gap):
-                uav.boundary_violation = True
-        next_positions: np.ndarray = np.clip(proposed_positions, [min_boundary_gap, min_boundary_gap], [config.AREA_WIDTH - min_boundary_gap, config.AREA_HEIGHT - min_boundary_gap])
+            if remaining_demand > 0:
+                # Buy from CS according to trade share
+                buy_from_cs = min(remaining_demand * max(trade, 0.0), config.CS_MAX_TRANSFER, self._cs_storage[cs_idx])
+                self._cs_storage[cs_idx] -= buy_from_cs
+                market_cost += (buy_from_cs / 3600000.0) * market_price
+                remaining_demand -= buy_from_cs
 
-        min_sep_sq: float = config.MIN_UAV_SEPARATION**2
-        for _ in range(config.COLLISION_AVOIDANCE_ITERATIONS + 1):
-            collision_detected_in_iter: bool = False
-            for i in range(config.NUM_UAVS):
-                for j in range(i + 1, config.NUM_UAVS):
-                    pos_i: np.ndarray = next_positions[i]
-                    pos_j: np.ndarray = next_positions[j]
-                    dist_sq: float = np.sum((pos_i - pos_j) ** 2)
-                    if dist_sq < min_sep_sq:
-                        self._uavs[i].collision_violation = True
-                        self._uavs[j].collision_violation = True
-                        collision_detected_in_iter = True
-                        dist: float = np.sqrt(dist_sq) if dist_sq > 0 else config.EPSILON
-                        overlap: float = config.MIN_UAV_SEPARATION - dist
-                        direction: np.ndarray = (pos_i - pos_j) / dist
-                        next_positions[i] += direction * overlap * 0.5
-                        next_positions[j] -= direction * overlap * 0.5
-            if not collision_detected_in_iter:
-                break
+                if remaining_demand > 0:
+                    # Fall back to grid for the rest
+                    grid_cost += (remaining_demand / 3600000.0) * grid_price
+            else:
+                surplus = -remaining_demand
+                retain_buffer = config.UAV_BATTERY_CAPACITY * config.BASIS_ENERGY_BUFFER
+                sellable = max(0.0, uav.battery_level - retain_buffer)
+                sell_amount = min(surplus * max(-trade, 0.0), sellable, config.CS_MAX_TRANSFER)
+                uav.battery_level -= sell_amount
+                self._cs_storage[cs_idx] = min(config.CS_STORAGE_CAPACITY, self._cs_storage[cs_idx] + sell_amount)
+                market_cost -= (sell_amount / 3600000.0) * market_price
 
-        final_positions: np.ndarray = np.clip(next_positions, [min_boundary_gap, min_boundary_gap], [config.AREA_WIDTH - min_boundary_gap, config.AREA_HEIGHT - min_boundary_gap])
-        for i, uav in enumerate(self._uavs):
-            uav.update_position(final_positions[i])
+            # Recharge battery opportunistically from CS if space is available
+            recharge = min(config.CS_MAX_TRANSFER, self._cs_storage[cs_idx], config.UAV_BATTERY_CAPACITY - uav.battery_level)
+            self._cs_storage[cs_idx] -= recharge
+            uav.battery_level += recharge
+
+        self._grid_energy_cost = grid_cost
+        self._market_energy_cost = market_cost
+        return grid_cost, market_cost
 
     def _associate_ues_to_uavs(self) -> None:
         """Assigns each UE to at most one UAV, resolving overlaps by choosing the closest UAV."""
@@ -174,7 +190,7 @@ class Env:
             best_uav.current_covered_ues.append(ue)
             ue.assigned = True
 
-    def _get_rewards_and_metrics(self) -> tuple[list[float], tuple[float, float, float]]:
+    def _get_rewards_and_metrics(self, grid_cost: float, market_cost: float) -> tuple[list[float], tuple[float, float, float, float]]:
         """Returns the reward and other metrics."""
         total_latency: float = sum(ue.latency_current_request if ue.assigned else config.NON_SERVED_LATENCY_PENALTY for ue in self._ues)
         total_energy: float = sum(uav.energy for uav in self._uavs)
@@ -183,15 +199,16 @@ class Env:
         if sc_metrics.size > 0 and np.sum(sc_metrics**2) > 0:
             jfi = (np.sum(sc_metrics) ** 2) / (sc_metrics.size * np.sum(sc_metrics**2))
 
-        r_fairness: float = config.ALPHA_3 * np.log(jfi + config.EPSILON)
-        r_latency: float = config.ALPHA_1 * np.log(total_latency + config.EPSILON)
-        r_energy: float = config.ALPHA_2 * np.log(total_energy + config.EPSILON)
-        reward: float = r_fairness - r_latency - r_energy
-        rewards: list[float] = [reward] * config.NUM_UAVS
-        for uav in self._uavs:
-            if uav.collision_violation:
-                rewards[uav.id] -= config.COLLISION_PENALTY
-            if uav.boundary_violation:
-                rewards[uav.id] -= config.BOUNDARY_PENALTY
-        rewards = [r * config.REWARD_SCALING_FACTOR for r in rewards]
-        return rewards, (total_latency, total_energy, jfi)
+        energy_cost = grid_cost + market_cost
+
+        # Normalized, target-aware reward components keep well-performing policies positive
+        fairness_term: float = np.log((jfi + config.EPSILON) / max(config.FAIRNESS_TARGET, config.EPSILON))
+        latency_term: float = np.log(max(config.LATENCY_TARGET, config.EPSILON) / (total_latency + config.EPSILON))
+        energy_term: float = np.log(max(config.ENERGY_COST_TARGET, config.EPSILON) / (energy_cost + config.EPSILON))
+
+        reward: float = config.REWARD_OFFSET
+        reward += config.ALPHA_3 * fairness_term
+        reward += config.ALPHA_1 * latency_term
+        reward += config.ALPHA_2 * energy_term
+        rewards: list[float] = [reward * config.REWARD_SCALING_FACTOR for _ in range(config.NUM_UAVS)]
+        return rewards, (total_latency, total_energy, jfi, energy_cost)

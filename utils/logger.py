@@ -10,12 +10,14 @@ class Log:
         self.latencies: list[float] = []
         self.energies: list[float] = []
         self.fairness_scores: list[float] = []
+        self.energy_costs: list[float] = []
 
-    def append(self, reward: float, latency: float, energy: float, fairness: float) -> None:
+    def append(self, reward: float, latency: float, energy: float, fairness: float, energy_cost: float) -> None:
         self.rewards.append(reward)
         self.latencies.append(latency)
         self.energies.append(energy)
         self.fairness_scores.append(fairness)
+        self.energy_costs.append(energy_cost)
 
 
 class Logger:
@@ -64,17 +66,35 @@ class Logger:
         latencies_slice: np.ndarray = np.array(log.latencies[-log_freq:])
         energies_slice: np.ndarray = np.array(log.energies[-log_freq:])
         fairness_slice: np.ndarray = np.array(log.fairness_scores[-log_freq:])
+        energy_cost_slice: np.ndarray = np.array(log.energy_costs[-log_freq:])
 
         reward_avg: float = float(np.mean(rewards_slice))
         latency_avg: float = float(np.mean(latencies_slice))
         energy_avg: float = float(np.mean(energies_slice))
         fairness_avg: float = float(np.mean(fairness_slice))
-        log_msg: str = f"🔄 {name.title()} {progress_step} | " f"Total Reward: {reward_avg:.3f} | " f"Total Latency: {latency_avg:.3f} | " f"Total Energy: {energy_avg:.3f} | " f"Final Fairness: {fairness_avg:.3f} | " f"Elapsed Time: {elapsed_time:.2f}s\n"
+        energy_cost_avg: float = float(np.mean(energy_cost_slice))
+        log_msg: str = (
+            f"🔄 {name.title()} {progress_step} | "
+            f"Total Reward: {reward_avg:.3f} | "
+            f"Total Latency: {latency_avg:.3f} | "
+            f"Total Energy: {energy_avg:.3f} | "
+            f"Energy Cost: {energy_cost_avg:.3f} | "
+            f"Final Fairness: {fairness_avg:.3f} | "
+            f"Elapsed Time: {elapsed_time:.2f}s\n"
+        )
 
         with open(self.log_file_path, "a", encoding="utf-8") as f:
             f.write(log_msg)
 
-        data_entry: dict = {name.lower(): progress_step, "reward": reward_avg, "latency": latency_avg, "energy": energy_avg, "fairness": fairness_avg, "time": elapsed_time}
+        data_entry: dict = {
+            name.lower(): progress_step,
+            "reward": reward_avg,
+            "latency": latency_avg,
+            "energy": energy_avg,
+            "energy_cost": energy_cost_avg,
+            "fairness": fairness_avg,
+            "time": elapsed_time,
+        }
         json_data: list[dict] = []
 
         if os.path.exists(self.json_file_path):

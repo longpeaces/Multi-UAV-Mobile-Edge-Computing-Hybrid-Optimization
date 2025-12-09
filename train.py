@@ -32,6 +32,7 @@ def train_on_policy(env: Env, model: MARLModel, logger: Logger, num_episodes: in
         rollout_reward: float = 0.0
         rollout_latency: float = 0.0
         rollout_energy: float = 0.0
+        rollout_energy_cost: float = 0.0
         rollout_fairness: float = 0.0
         # reset_trajectories(env)  # tracking code, comment if not needed
         plot_snapshot(env, update, 0, logger.log_dir, "update", logger.timestamp, True)
@@ -43,7 +44,7 @@ def train_on_policy(env: Env, model: MARLModel, logger: Logger, num_episodes: in
             obs_arr: np.ndarray = np.array(obs)
             actions, log_probs, value = model.get_action_and_value(obs_arr, state)
 
-            next_obs, rewards, (total_latency, total_energy, jfi) = env.step(actions)
+            next_obs, rewards, (total_latency, total_energy, jfi, energy_cost) = env.step(actions)
             # update_trajectories(env)  # tracking code, comment if not needed
             next_state: np.ndarray = np.concatenate(next_obs, axis=0)
             done: bool = step >= config.PPO_ROLLOUT_LENGTH
@@ -56,6 +57,7 @@ def train_on_policy(env: Env, model: MARLModel, logger: Logger, num_episodes: in
             rollout_latency += total_latency
             rollout_energy += total_energy
             rollout_fairness = jfi
+            rollout_energy_cost += energy_cost
 
         with torch.no_grad():
             _, _, last_value = model.get_action_and_value(np.array(obs), state)
@@ -69,12 +71,17 @@ def train_on_policy(env: Env, model: MARLModel, logger: Logger, num_episodes: in
 
         buffer.clear()
 
-        rollout_log.append(rollout_reward, rollout_latency, rollout_energy, rollout_fairness)
+        rollout_log.append(rollout_reward, rollout_latency, rollout_energy, rollout_fairness, rollout_energy_cost)
         if update % config.LOG_FREQ == 0:
             elapsed_time: float = time.time() - start_time
             logger.log_metrics(update, rollout_log, config.LOG_FREQ, elapsed_time, "update")
         if update % save_freq == 0 and update < num_episodes:
             save_models(model, update, "update", logger.timestamp)
+
+    if len(rollout_log.rewards) % config.LOG_FREQ != 0:
+        elapsed_time: float = time.time() - start_time
+        log_freq: int = min(len(rollout_log.rewards), config.LOG_FREQ)
+        logger.log_metrics(num_updates, rollout_log, log_freq, elapsed_time, "update")
 
     save_models(model, -1, "update", logger.timestamp, final=True)
 
@@ -93,6 +100,7 @@ def train_off_policy(env: Env, model: MARLModel, logger: Logger, num_episodes: i
         episode_reward: float = 0.0
         episode_latency: float = 0.0
         episode_energy: float = 0.0
+        episode_energy_cost: float = 0.0
         episode_fairness: float = 0.0
         # reset_trajectories(env)  # tracking code, comment if not needed
         plot_snapshot(env, episode, 0, logger.log_dir, "episode", logger.timestamp, True)
@@ -107,7 +115,7 @@ def train_off_policy(env: Env, model: MARLModel, logger: Logger, num_episodes: i
             else:
                 actions = model.select_actions(obs, exploration=True)
 
-            next_obs, rewards, (total_latency, total_energy, jfi) = env.step(actions)
+            next_obs, rewards, (total_latency, total_energy, jfi, energy_cost) = env.step(actions)
             # update_trajectories(env)  # tracking code, comment if not needed
             done: bool = step >= config.STEPS_PER_EPISODE
             buffer.add(obs, actions, rewards, next_obs, done)
@@ -122,15 +130,21 @@ def train_off_policy(env: Env, model: MARLModel, logger: Logger, num_episodes: i
             episode_latency += total_latency
             episode_energy += total_energy
             episode_fairness = jfi
+            episode_energy_cost += energy_cost
             if done:
                 break
 
-        episode_log.append(episode_reward, episode_latency, episode_energy, episode_fairness)
+        episode_log.append(episode_reward, episode_latency, episode_energy, episode_fairness, episode_energy_cost)
         if episode % config.LOG_FREQ == 0:
             elapsed_time: float = time.time() - start_time
             logger.log_metrics(episode, episode_log, config.LOG_FREQ, elapsed_time, "episode")
         if episode % save_freq == 0 and episode < num_episodes:
             save_models(model, episode, "episode", logger.timestamp, total_steps=total_step_count)
+
+    if len(episode_log.rewards) % config.LOG_FREQ != 0:
+        elapsed_time = time.time() - start_time
+        log_freq = min(len(episode_log.rewards), config.LOG_FREQ)
+        logger.log_metrics(num_episodes, episode_log, log_freq, elapsed_time, "episode")
 
     save_models(model, -1, "episode", logger.timestamp, final=True, total_steps=total_step_count)
 
@@ -144,6 +158,7 @@ def train_random(env: Env, model: MARLModel, logger: Logger, num_episodes: int) 
         episode_reward: float = 0.0
         episode_latency: float = 0.0
         episode_energy: float = 0.0
+        episode_energy_cost: float = 0.0
         episode_fairness: float = 0.0
         # reset_trajectories(env)  # tracking code, comment if not needed
         plot_snapshot(env, episode, 0, logger.log_dir, "episode", logger.timestamp, True)
@@ -153,7 +168,7 @@ def train_random(env: Env, model: MARLModel, logger: Logger, num_episodes: int) 
                 plot_snapshot(env, episode, step, logger.log_dir, "episode", logger.timestamp)
 
             actions: np.ndarray = model.select_actions(obs, exploration=False)
-            next_obs, rewards, (total_latency, total_energy, jfi) = env.step(actions)
+            next_obs, rewards, (total_latency, total_energy, jfi, energy_cost) = env.step(actions)
             # update_trajectories(env)  # tracking code, comment if not needed
             done: bool = step >= config.STEPS_PER_EPISODE
             obs = next_obs
@@ -162,10 +177,16 @@ def train_random(env: Env, model: MARLModel, logger: Logger, num_episodes: int) 
             episode_latency += total_latency
             episode_energy += total_energy
             episode_fairness = jfi
+            episode_energy_cost += energy_cost
             if done:
                 break
 
-        episode_log.append(episode_reward, episode_latency, episode_energy, episode_fairness)
+        episode_log.append(episode_reward, episode_latency, episode_energy, episode_fairness, episode_energy_cost)
         if episode % config.LOG_FREQ == 0:
             elapsed_time: float = time.time() - start_time
             logger.log_metrics(episode, episode_log, config.LOG_FREQ, elapsed_time, "episode")
+
+    if len(episode_log.rewards) % config.LOG_FREQ != 0:
+        elapsed_time = time.time() - start_time
+        log_freq = min(len(episode_log.rewards), config.LOG_FREQ)
+        logger.log_metrics(num_episodes, episode_log, log_freq, elapsed_time, "episode")

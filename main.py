@@ -13,6 +13,19 @@ import warnings
 from datetime import datetime
 
 
+def apply_overrides(args: argparse.Namespace) -> None:
+    """Override selected config values for quick experiments without editing config.py."""
+
+    if getattr(args, "model", None):
+        config.MODEL = args.model.lower()
+
+    if getattr(args, "steps_per_episode", None) is not None:
+        config.STEPS_PER_EPISODE = args.steps_per_episode
+
+    if getattr(args, "initial_random_steps", None) is not None:
+        config.INITIAL_RANDOM_STEPS = args.initial_random_steps
+
+
 def start_training(args: argparse.Namespace):
     timestamp: str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     print(f"\n🚀 Training started at {timestamp} for {args.num_episodes} episodes\n")
@@ -26,7 +39,11 @@ def start_training(args: argparse.Namespace):
     else:  # Fresh training
         if args.config_path is not None:
             warnings.warn("--config_path is ignored during training unless --resume_path is also provided.")
-        logger.log_configs()
+
+    apply_overrides(args)
+
+    # Log the active configuration for reproducibility
+    logger.log_configs()
 
     np.random.seed(config.SEED)
     torch.manual_seed(config.SEED)
@@ -59,6 +76,9 @@ def start_testing(args: argparse.Namespace):
     logger: Logger = Logger("test_logs", timestamp)
     logger.load_configs(args.config_path)
 
+    apply_overrides(args)
+    logger.log_configs()
+
     np.random.seed(config.SEED)
     torch.manual_seed(config.SEED)
     env: Env = Env()
@@ -79,6 +99,22 @@ if __name__ == "__main__":
     subparsers = parser.add_subparsers(dest="mode", required=True)
     parent_parser = argparse.ArgumentParser(add_help=False)
     parent_parser.add_argument("--num_episodes", type=int, required=True)
+    parent_parser.add_argument(
+        "--model",
+        type=str,
+        choices=["maddpg", "matd3", "mappo", "masac", "random"],
+        help="Override config.MODEL for this run",
+    )
+    parent_parser.add_argument(
+        "--steps_per_episode",
+        type=int,
+        help="Override config.STEPS_PER_EPISODE for faster smoke tests",
+    )
+    parent_parser.add_argument(
+        "--initial_random_steps",
+        type=int,
+        help="Override config.INITIAL_RANDOM_STEPS for quick MATD3/MADDPG warmup",
+    )
     train_parser = subparsers.add_parser("train", parents=[parent_parser])
     train_parser.add_argument("--resume_path", type=str, default=None)
     train_parser.add_argument("--config_path", type=str, default=None)

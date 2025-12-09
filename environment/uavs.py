@@ -5,10 +5,10 @@ import config
 import numpy as np
 
 
-def _get_computing_latency_and_energy(uav: UAV, cpu_cycles: int) -> tuple[float, float]:
+def _get_computing_latency_and_energy(uav: "UAV", cpu_cycles: int) -> tuple[float, float]:
     """Calculate computing latency and energy for a UAV processing request."""
-    assert uav._current_service_request_count != 0
-    computing_capacity_per_request: float = config.UAV_COMPUTING_CAPACITY[uav.id] / uav._current_service_request_count
+    effective_capacity = config.UAV_COMPUTING_CAPACITY[uav.id] * uav.compute_scaling
+    computing_capacity_per_request: float = max(effective_capacity / max(uav._current_service_request_count, 1), config.EPSILON)
     latency: float = cpu_cycles / computing_capacity_per_request
     energy: float = config.K_CPU * cpu_cycles * (computing_capacity_per_request**2)
     return latency, energy
@@ -46,6 +46,12 @@ class UAV:
         self._uav_uav_rate: float = 0.0
         self._uav_mbs_rate: float = 0.0
 
+        # Energy state and control decisions
+        self.battery_level: float = config.UAV_BATTERY_CAPACITY
+        self.offload_preference: float = 0.5
+        self.compute_scaling: float = 1.0
+        self.energy_trade: float = 0.0
+
     @property
     def energy(self) -> float:
         return self._energy_current_slot
@@ -73,6 +79,15 @@ class UAV:
         self._energy_current_slot = 0.0
         self.collision_violation = False
         self.boundary_violation = False
+        self._dist_moved = 0.0
+
+    def set_decisions(self, action: np.ndarray, current_hour: int) -> None:
+        """Map agent action to MEC and energy decisions."""
+        del current_hour  # hour handled in Env for pricing
+        clipped_action = np.clip(action, -1.0, 1.0)
+        self.offload_preference = float((clipped_action[0] + 1.0) / 2.0)
+        self.compute_scaling = float(np.clip((clipped_action[1] + 1.0) / 2.0, 0.05, 1.0))
+        self.energy_trade = float(clipped_action[2])
 
     def update_position(self, next_pos: np.ndarray) -> None:
         """Update the UAV's position to the new location chosen by the MARL agent."""
@@ -185,7 +200,7 @@ class UAV:
             comp_latency, comp_energy = _get_computing_latency_and_energy(self, cpu_cycles)
             ue.latency_current_request = ue_assoc_uav_latency + comp_latency
             self._energy_current_slot += comp_energy
-        elif self._current_collaborator:
+        elif self._current_collaborator and self.offload_preference < 0.5:
             uav_uav_latency = req_size / self._uav_uav_rate
             if self._current_collaborator.cache[req_id]:
                 # Served by collaborator
@@ -253,7 +268,5 @@ class UAV:
 
     def update_energy_consumption(self) -> None:
         """Update UAV energy consumption for the current time slot."""
-        time_moving = self._dist_moved / config.UAV_SPEED
-        time_hovering = config.TIME_SLOT_DURATION - time_moving
-        fly_energy = config.POWER_MOVE * time_moving + config.POWER_HOVER * time_hovering
-        self._energy_current_slot += fly_energy
+        hover_energy = config.POWER_HOVER * config.TIME_SLOT_DURATION
+        self._energy_current_slot += hover_energy

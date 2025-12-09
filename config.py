@@ -13,6 +13,7 @@ TEST_IMG_FREQ: int = 100  # steps (for testing)
 MBS_POS: np.ndarray = np.array([500.0, 500.0, 30.0])  # (X_mbs, Y_mbs, Z_mbs) in meters
 NUM_UAVS: int = 10  # U
 NUM_UES: int = 200  # M
+NUM_CS: int = 3  # charging platforms
 AREA_WIDTH: int = 1000  # X_max in meters
 AREA_HEIGHT: int = 1000  # Y_max in meters
 TIME_SLOT_DURATION: float = 1.0  # tau in seconds
@@ -21,6 +22,7 @@ UE_MAX_WAIT_TIME: int = 10  # in time slots
 
 # UAV Parameters
 UAV_ALTITUDE: int = 100  # H in meters
+# Trajectory optimization removed; speed is retained for hover energy scaling only
 UAV_SPEED: int = 30  # v^UAV in m/s
 UAV_STORAGE_CAPACITY: np.ndarray = np.random.choice(np.arange(5 * 10**6, 20 * 10**6, 10**6), size=NUM_UAVS)  # S_u in bytes
 UAV_COMPUTING_CAPACITY: np.ndarray = np.random.choice(np.arange(5 * 10**9, 20 * 10**9, 10**9), size=NUM_UAVS)  # F_u in cycles/sec
@@ -43,6 +45,19 @@ assert MAX_ASSOCIATED_UES >= 1 and MAX_ASSOCIATED_UES <= NUM_UES
 
 POWER_MOVE: float = 100.0  # P_move in Watts
 POWER_HOVER: float = 80.0  # P_hover in Watts
+UAV_BATTERY_CAPACITY: float = 6e4  # in Joules
+BASIS_ENERGY_BUFFER: float = 0.2  # min battery fraction to keep before selling
+
+# Charging platform parameters
+CS_STORAGE_CAPACITY: float = 2e5  # energy storage per platform (J)
+CS_MAX_TRANSFER: float = 5e3  # max energy that can be transferred per slot (J)
+CS_RENEWABLE_MEAN: float = 2e3  # average renewable generation per slot (J)
+
+# Energy pricing (hourly)
+HOURS_PER_DAY: int = 24
+SLOTS_PER_HOUR: int = 12  # e.g., 5-minute slots
+GRID_PRICES: np.ndarray = np.linspace(0.12, 0.20, HOURS_PER_DAY)  # $/kWh equivalent
+MARKET_PRICES: np.ndarray = np.linspace(0.08, 0.16, HOURS_PER_DAY)  # $/kWh equivalent
 
 # Request Parameters
 NUM_SERVICES: int = 50  # S
@@ -74,10 +89,17 @@ ALPHA_2 = 1.0  # weightage for energy
 ALPHA_3 = 4.0  # weightage for fairness
 REWARD_SCALING_FACTOR: float = 0.01  # scaling factor for rewards
 
-OBS_DIM_SINGLE: int = 2 + NUM_FILES + (MAX_UAV_NEIGHBORS * (2 + NUM_FILES)) + (MAX_ASSOCIATED_UES * (2 + 3))
-# own state: pos (2) + cache (NUM_FILES) + Neighbors: pos (2) + cache (NUM_FILES) + UEs: pos (2) + request_tuple (3)
+# Reward shaping targets (tune to keep converged reward positive)
+FAIRNESS_TARGET: float = 0.8  # desired Jain's fairness index (0-1)
+LATENCY_TARGET: float = 1e5   # target aggregated latency (smaller is better)
+ENERGY_COST_TARGET: float = 1.0  # target grid+market energy cost (Wh-equivalent)
+REWARD_OFFSET: float = 0.0  # shift rewards upward if needed
 
-ACTION_DIM: int = 2  # angle, distance from [-1, 1]
+OBS_DIM_SINGLE: int = 5 + NUM_FILES + (MAX_UAV_NEIGHBORS * (2 + NUM_FILES)) + (MAX_ASSOCIATED_UES * (2 + 3))
+# own state: pos (2) + battery (1) + cs_price (1) + hour (1) + cache (NUM_FILES)
+# Neighbors: pos (2) + cache (NUM_FILES) + UEs: pos (2) + request_tuple (3)
+
+ACTION_DIM: int = 3  # [offload preference, compute scaling, energy trade]
 STATE_DIM: int = NUM_UAVS * OBS_DIM_SINGLE
 MLP_HIDDEN_DIM: int = 256
 
