@@ -19,8 +19,16 @@ def plot_metric(x: list, y: list, xlabel: str, ylabel: str, title: str, output_p
 def generate_plots(log_file: str, output_dir: str, output_file_prefix: str, timestamp: str) -> None:
     """Generate plots from the logs stored in 'log_file'"""
 
+    if not os.path.exists(log_file):
+        print(f"⚠️ No log file found at {log_file}; skipping plot generation.\n")
+        return
+
     with open(log_file, "r") as file:
         log_data: list[dict] = json.load(file)
+
+    if len(log_data) == 0:
+        print(f"⚠️ Log file {log_file} is empty; skipping plot generation.\n")
+        return
     os.makedirs(output_dir, exist_ok=True)
 
     if "update" in log_data[0]:

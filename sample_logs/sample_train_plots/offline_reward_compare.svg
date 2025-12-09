@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="520" viewBox="0 0 900 520">
+<rect width="900" height="520" fill="#ffffff"/>
+<text x="450.0" y="30.0" text-anchor="middle" font-size="18" fill="#2c3e50">Reward Comparison</text>
+<line x1="60" y1="460" x2="840" y2="460" stroke="#2c3e50" stroke-width="2"/>
+<line x1="60" y1="460" x2="60" y2="60" stroke="#2c3e50" stroke-width="2"/>
+<line x1="60.00" y1="460" x2="60.00" y2="466" stroke="#95a5a6" stroke-width="1"/>
+<text x="60.00" y="480" text-anchor="middle" font-size="12" fill="#34495e">1.00</text>
+<line x1="216.00" y1="460" x2="216.00" y2="466" stroke="#95a5a6" stroke-width="1"/>
+<text x="216.00" y="480" text-anchor="middle" font-size="12" fill="#34495e">1.80</text>
+<line x1="372.00" y1="460" x2="372.00" y2="466" stroke="#95a5a6" stroke-width="1"/>
+<text x="372.00" y="480" text-anchor="middle" font-size="12" fill="#34495e">2.60</text>
+<line x1="528.00" y1="460" x2="528.00" y2="466" stroke="#95a5a6" stroke-width="1"/>
+<text x="528.00" y="480" text-anchor="middle" font-size="12" fill="#34495e">3.40</text>
+<line x1="684.00" y1="460" x2="684.00" y2="466" stroke="#95a5a6" stroke-width="1"/>
+<text x="684.00" y="480" text-anchor="middle" font-size="12" fill="#34495e">4.20</text>
+<line x1="840.00" y1="460" x2="840.00" y2="466" stroke="#95a5a6" stroke-width="1"/>
+<text x="840.00" y="480" text-anchor="middle" font-size="12" fill="#34495e">5.00</text>
+<line x1="60" y1="460.00" x2="54" y2="460.00" stroke="#95a5a6" stroke-width="1"/>
+<text x="50" y="464.00" text-anchor="end" font-size="12" fill="#34495e">-14878112.22</text>
+<line x1="60" y1="380.00" x2="54" y2="380.00" stroke="#95a5a6" stroke-width="1"/>
+<text x="50" y="384.00" text-anchor="end" font-size="12" fill="#34495e">-13279260.19</text>
+<line x1="60" y1="300.00" x2="54" y2="300.00" stroke="#95a5a6" stroke-width="1"/>
+<text x="50" y="304.00" text-anchor="end" font-size="12" fill="#34495e">-11680408.15</text>
+<line x1="60" y1="220.00" x2="54" y2="220.00" stroke="#95a5a6" stroke-width="1"/>
+<text x="50" y="224.00" text-anchor="end" font-size="12" fill="#34495e">-10081556.11</text>
+<line x1="60" y1="140.00" x2="54" y2="140.00" stroke="#95a5a6" stroke-width="1"/>
+<text x="50" y="144.00" text-anchor="end" font-size="12" fill="#34495e">-8482704.08</text>
+<line x1="60" y1="60.00" x2="54" y2="60.00" stroke="#95a5a6" stroke-width="1"/>
+<text x="50" y="64.00" text-anchor="end" font-size="12" fill="#34495e">-6883852.04</text>
+<text x="450.0" y="500.0" text-anchor="middle" font-size="14" fill="#2c3e50">Update</text>
+<text x="20.0" y="260.0" text-anchor="middle" font-size="14" fill="#2c3e50" transform="rotate(-90 20.0,260.0)">Reward</text>
+<polyline fill="none" stroke="#2E86AB" stroke-width="2.0" points="60.00,64.22 255.00,60.00 450.00,84.10 645.00,69.38 840.00,66.92" />
+<rect x="850" y="50" width="14" height="14" fill="#2E86AB" />
+<text x="870" y="62" font-size="12" fill="#2c3e50">log_data_2025-10-20_10-50-12</text>
+<polyline fill="none" stroke="#E67E22" stroke-width="2.0" points="60.00,390.28 255.00,460.00" />
+<rect x="850" y="68" width="14" height="14" fill="#E67E22" />
+<text x="870" y="80" font-size="12" fill="#2c3e50">log_data_2025-10-20_10-42-58</text>
+</svg>
